@@ -5,7 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 
-namespace BetterWriting
+namespace DeskHand
 {
     sealed class Config
     {
@@ -68,6 +68,7 @@ namespace BetterWriting
 
         public Dictionary<string, HashSet<string>> AppRules = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> SnippetList = DefaultSnippets();
+        public List<Scenario> Scenarios = new List<Scenario>();
 
         public static Config Load(string path)
         {
@@ -94,6 +95,7 @@ namespace BetterWriting
                         snippetsSeen = true;
                         cfg.SnippetList.Clear();
                     }
+                    if (section == "scenario") cfg.Scenarios.Add(new Scenario());
                     continue;
                 }
                 int eq = line.IndexOf('=');
@@ -105,6 +107,7 @@ namespace BetterWriting
                 else if (section == "snippets") cfg.SnippetList[key] = Unescape(val);
                 else if (section == "corrections") cfg.CustomTypos[key] = Unescape(val);
                 else if (section == "layouts") cfg.AppLayouts[key] = val;
+                else if (section == "scenario") cfg.Scenarios[cfg.Scenarios.Count - 1].SetValue(key, val);
                 else if (section == "main") cfg.SetValue(key, val);
             }
             cfg.Upgrade(path);
@@ -174,6 +177,59 @@ namespace BetterWriting
                     foreach (string f in Features)
                         if (f.Equals(key, StringComparison.OrdinalIgnoreCase)) SetFeature(f, Bool(val));
                     break;
+            }
+        }
+
+        public static readonly string[] Toggles =
+        {
+            "Capitalize", "DoubleSpacePeriod", "AutoSpace", "AutoHyphen", "SmartQuotes", "AutoBrackets", "CapsLockFix", "Typos", "EnglishI", "Snippets",
+            "CapitalizeAfterEnter", "CapitalizeOnWindowSwitch", "CapitalizeAfterClick", "CapitalizeAfterEllipsis", "CapitalizeInBrackets",
+            "LayoutFix", "LayoutPerApp", "LayoutIndicator", "LangRussian", "LangEnglish", "LangOther",
+            "PinOnTitleBar", "KeepAwakeScreen", "SkipFullscreen", "IgnoreInjected"
+        };
+
+        public bool? GetToggle(string key)
+        {
+            foreach (string f in Features) if (f == key) return GetFeature(f);
+            switch (key)
+            {
+                case "CapitalizeAfterEnter": return CapitalizeAfterEnter;
+                case "CapitalizeOnWindowSwitch": return CapitalizeOnWindowSwitch;
+                case "CapitalizeAfterClick": return CapitalizeAfterClick;
+                case "CapitalizeAfterEllipsis": return CapitalizeAfterEllipsis;
+                case "CapitalizeInBrackets": return CapitalizeInBrackets;
+                case "LayoutPerApp": return LayoutPerApp;
+                case "LayoutIndicator": return LayoutIndicator;
+                case "LangRussian": return LangRussian;
+                case "LangEnglish": return LangEnglish;
+                case "LangOther": return LangOther;
+                case "PinOnTitleBar": return PinOnTitleBar;
+                case "KeepAwakeScreen": return KeepAwakeScreen;
+                case "SkipFullscreen": return SkipFullscreen;
+                case "IgnoreInjected": return IgnoreInjected;
+            }
+            return null;
+        }
+
+        public void SetToggle(string key, bool on)
+        {
+            foreach (string f in Features) if (f == key) { SetFeature(f, on); return; }
+            switch (key)
+            {
+                case "CapitalizeAfterEnter": CapitalizeAfterEnter = on; break;
+                case "CapitalizeOnWindowSwitch": CapitalizeOnWindowSwitch = on; break;
+                case "CapitalizeAfterClick": CapitalizeAfterClick = on; break;
+                case "CapitalizeAfterEllipsis": CapitalizeAfterEllipsis = on; break;
+                case "CapitalizeInBrackets": CapitalizeInBrackets = on; break;
+                case "LayoutPerApp": LayoutPerApp = on; break;
+                case "LayoutIndicator": LayoutIndicator = on; break;
+                case "LangRussian": LangRussian = on; break;
+                case "LangEnglish": LangEnglish = on; break;
+                case "LangOther": LangOther = on; break;
+                case "PinOnTitleBar": PinOnTitleBar = on; break;
+                case "KeepAwakeScreen": KeepAwakeScreen = on; break;
+                case "SkipFullscreen": SkipFullscreen = on; break;
+                case "IgnoreInjected": IgnoreInjected = on; break;
             }
         }
 
@@ -253,7 +309,7 @@ namespace BetterWriting
         public void Save(string path)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("; BetterWriting settings. It is easier to change them in the settings window (click the tray icon).");
+            sb.AppendLine("; DeskHand settings. It is easier to change them in the settings window (click the tray icon).");
             sb.AppendLine("; 1 = on, 0 = off.");
             sb.AppendLine();
             sb.AppendLine("[Main]");
@@ -320,6 +376,36 @@ namespace BetterWriting
             sb.AppendLine("[Snippets]");
             foreach (var s in SnippetList) sb.AppendLine(s.Key + " = " + Escape(s.Value));
 
+            sb.AppendLine();
+            sb.AppendLine("; Scenarios. Each [Scenario] section is one scenario, its steps run one after another.");
+            sb.AppendLine("; Step = kind | option | value. Kinds: " + string.Join(", ", ScenarioStep.Kinds));
+            foreach (var sc in Scenarios)
+            {
+                sb.AppendLine("[Scenario]");
+                sb.AppendLine("Name = " + Escape(sc.Name));
+                sb.AppendLine("Hotkey = " + sc.Hotkey);
+                sb.AppendLine("Tray = " + (sc.InTray ? "1" : "0"));
+                sb.AppendLine("Startup = " + (sc.OnStartup ? "1" : "0"));
+                if (sc.Time.Length > 0) sb.AppendLine("Time = " + sc.Time);
+                if (sc.Days != "1111111") sb.AppendLine("Days = " + sc.Days);
+                if (sc.WhenOpened.Length > 0) sb.AppendLine("WhenOpened = " + sc.WhenOpened);
+                if (sc.WhenClosed.Length > 0) sb.AppendLine("WhenClosed = " + sc.WhenClosed);
+                if (sc.Idle.Length > 0)
+                {
+                    sb.AppendLine("Idle = " + sc.Idle);
+                    sb.AppendLine("IdleEvent = " + sc.IdleEvent);
+                }
+                if (sc.Event.Length > 0)
+                {
+                    sb.AppendLine("Event = " + sc.Event);
+                    if (sc.EventArg.Length > 0) sb.AppendLine("EventArg = " + Escape(sc.EventArg));
+                }
+                if (sc.Ask) sb.AppendLine("Ask = 1");
+                foreach (var st in sc.Steps)
+                    sb.AppendLine("Step = " + st.Kind + " | " + st.Option.Replace("|", "/") + (st.Flags.Length > 0 || st.Value.TrimStart().StartsWith("~") ? " | ~" + st.Flags.Replace("|", "/") : "") + " | " + Escape(st.Value));
+                sb.AppendLine();
+            }
+
             string temp = path + ".tmp";
             File.WriteAllText(temp, sb.ToString(), new UTF8Encoding(true));
             try
@@ -353,9 +439,18 @@ namespace BetterWriting
 
         static string Join(IEnumerable<string> items) { return string.Join(", ", items.ToArray()); }
 
-        static string Escape(string s) { return s.Replace("\\", "\\\\").Replace("\r\n", "\n").Replace("\n", "\\n"); }
+        public static string Escape(string s)
+        {
+            string e = s.Replace("\\", "\\\\").Replace("\r\n", "\n").Replace("\n", "\\n");
+            int lead = 0;
+            while (lead < e.Length && e[lead] == ' ') lead++;
+            if (lead == e.Length) return string.Concat(Enumerable.Repeat("\\s", lead));
+            int trail = 0;
+            while (trail < e.Length && e[e.Length - 1 - trail] == ' ') trail++;
+            return string.Concat(Enumerable.Repeat("\\s", lead)) + e.Substring(lead, e.Length - lead - trail) + string.Concat(Enumerable.Repeat("\\s", trail));
+        }
 
-        static string Unescape(string s)
+        public static string Unescape(string s)
         {
             var sb = new StringBuilder();
             for (int i = 0; i < s.Length; i++)
@@ -363,14 +458,14 @@ namespace BetterWriting
                 if (s[i] == '\\' && i + 1 < s.Length)
                 {
                     char n = s[++i];
-                    sb.Append(n == 'n' ? '\n' : n);
+                    sb.Append(n == 'n' ? '\n' : n == 's' ? ' ' : n);
                 }
                 else sb.Append(s[i]);
             }
             return sb.ToString();
         }
 
-        static bool Bool(string v) { return v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase); }
+        public static bool Bool(string v) { return v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase); }
 
         public static HashSet<string> List(string v)
         {
@@ -382,6 +477,406 @@ namespace BetterWriting
                 if (p.Length > 0) set.Add(p);
             }
             return set;
+        }
+    }
+
+    static class Durations
+    {
+        public static double Parse(string text)
+        {
+            string number, unit;
+            Split(text, out number, out unit);
+            double v;
+            if (!double.TryParse(number.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out v) || v <= 0) return 0;
+            double seconds = unit == "h" ? v * 3600 : unit == "m" ? v * 60 : v;
+            return Math.Min(seconds, 7 * 86400);
+        }
+
+        public static void Split(string text, out string number, out string unit)
+        {
+            string t = (text ?? "").Trim().ToLowerInvariant();
+            unit = "s";
+            if (t.EndsWith("h")) unit = "h";
+            else if (t.EndsWith("m")) unit = "m";
+            number = unit != "s" || t.EndsWith("s") ? t.Substring(0, Math.Max(0, t.Length - 1)).Trim() : t;
+        }
+
+        public static string Join(string number, string unit)
+        {
+            number = (number ?? "").Trim();
+            return number.Length == 0 || unit == "s" ? number : number + unit;
+        }
+    }
+
+    static class ScenarioCondition
+    {
+        public static void Parse(string option, out string kind, out bool negate, out int skip)
+        {
+            string o = (option ?? "").Trim();
+            string tail = "stop";
+            int colon = o.IndexOf(':');
+            if (colon >= 0)
+            {
+                tail = o.Substring(colon + 1).Trim();
+                o = o.Substring(0, colon).Trim();
+            }
+            negate = o.EndsWith("!");
+            kind = negate ? o.Substring(0, o.Length - 1) : o;
+            if (kind.Length == 0) kind = "running";
+            skip = 0;
+            if (tail.StartsWith("skip"))
+            {
+                int n;
+                skip = int.TryParse(tail.Substring(4), out n) && n > 0 ? n : 1;
+            }
+        }
+
+        public static string Format(string kind, bool negate, int skip)
+        {
+            return kind + (negate ? "!" : "") + ":" + (skip > 0 ? "skip" + skip : "stop");
+        }
+
+        public static bool InTimeRange(string range, DateTime now)
+        {
+            string[] parts = (range ?? "").Split('-');
+            TimeSpan from, to;
+            if (parts.Length != 2 || !TryTime(parts[0], out from) || !TryTime(parts[1], out to)) return false;
+            var t = now.TimeOfDay;
+            return from <= to ? t >= from && t < to : t >= from || t < to;
+        }
+
+        public static bool TryTime(string text, out TimeSpan time)
+        {
+            return TimeSpan.TryParseExact((text ?? "").Trim(), new[] { "h\\:mm", "hh\\:mm" }, CultureInfo.InvariantCulture, out time) && time.TotalHours < 24;
+        }
+
+        public static bool TextMatches(string arg, string clipboard, string buffer)
+        {
+            string[] parts = (arg ?? "").Split(new[] { '\n' }, 3);
+            string source = parts.Length > 0 ? parts[0] : "clipboard";
+            string mode = parts.Length > 1 ? parts[1] : "contains";
+            string wanted = parts.Length > 2 ? parts[2] : "";
+            string have = (source == "buffer" ? buffer : clipboard) ?? "";
+            switch (mode)
+            {
+                case "exact": return have == wanted;
+                case "nocase": return string.Equals(have.Trim(), wanted.Trim(), StringComparison.CurrentCultureIgnoreCase);
+                case "empty": return have.Trim().Length == 0;
+            }
+            return wanted.Length == 0 || have.IndexOf(wanted, StringComparison.CurrentCultureIgnoreCase) >= 0;
+        }
+
+        public static bool OnDay(string days, DateTime now)
+        {
+            int day = ((int)now.DayOfWeek + 6) % 7;
+            return days != null && days.Length == 7 && days[day] == '1';
+        }
+    }
+
+    sealed class ClickSpot
+    {
+        public double X = 0.5, Y = 0.5;
+        public string Mode = "window";
+        public string Program = "";
+        public int ScreenX, ScreenY;
+
+        public static ClickSpot Parse(string value)
+        {
+            var spot = new ClickSpot();
+            string[] p = (value ?? "").Split(';');
+            double d;
+            int n;
+            if (p.Length > 0 && double.TryParse(p[0], NumberStyles.Float, CultureInfo.InvariantCulture, out d)) spot.X = Math.Max(0, Math.Min(1, d));
+            if (p.Length > 1 && double.TryParse(p[1], NumberStyles.Float, CultureInfo.InvariantCulture, out d)) spot.Y = Math.Max(0, Math.Min(1, d));
+            if (p.Length > 2 && p[2] == "screen") spot.Mode = "screen";
+            if (p.Length > 3) spot.Program = p[3].Trim();
+            if (p.Length > 4 && int.TryParse(p[4], out n)) spot.ScreenX = n;
+            if (p.Length > 5 && int.TryParse(p[5], out n)) spot.ScreenY = n;
+            return spot;
+        }
+
+        public bool Recorded { get { return Mode == "screen" ? ScreenX != 0 || ScreenY != 0 : Program.Length > 0; } }
+
+        public override string ToString()
+        {
+            return X.ToString("0.0000", CultureInfo.InvariantCulture) + ";" + Y.ToString("0.0000", CultureInfo.InvariantCulture) + ";" + Mode + ";" +
+                   Program.Replace(";", "") + ";" + ScreenX + ";" + ScreenY;
+        }
+    }
+
+    static partial class WebText
+    {
+        public static string Strip(string html)
+        {
+            if (html == null) return "";
+            string s = System.Text.RegularExpressions.Regex.Replace(html, @"<(script|style|noscript|svg)[^>]*>[\s\S]*?</\1\s*>", " ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"<!--[\s\S]*?-->", " ");
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"<\s*(br|/p|/div|/li|/tr|/h[1-6]|/title)[^>]*>", "\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"<[^>]+>", " ");
+            s = System.Net.WebUtility.HtmlDecode(s);
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"[ \t\r\f\v\u00A0]+", " ");
+            s = System.Text.RegularExpressions.Regex.Replace(s, @" ?\n[ \n]*", "\n");
+            return s.Trim();
+        }
+
+        public static string Extract(string page, string mode, string first, string second)
+        {
+            string text = Strip(page);
+            switch (mode)
+            {
+                case "between":
+                    if (string.IsNullOrEmpty(first)) return null;
+                    int a = text.IndexOf(first, StringComparison.CurrentCultureIgnoreCase);
+                    if (a < 0) return null;
+                    int from = a + first.Length;
+                    int b;
+                    if (string.IsNullOrEmpty(second))
+                    {
+                        b = text.IndexOf('\n', from);
+                        if (b < 0) b = text.Length;
+                    }
+                    else
+                    {
+                        b = text.IndexOf(second, from, StringComparison.CurrentCultureIgnoreCase);
+                        if (b < 0) return null;
+                    }
+                    string between = text.Substring(from, b - from).Trim();
+                    return between.Length == 0 ? null : between;
+                case "regex":
+                    try
+                    {
+                        var m = System.Text.RegularExpressions.Regex.Match(text, first ?? "", System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2));
+                        if (!m.Success) m = System.Text.RegularExpressions.Regex.Match(page ?? "", first ?? "", System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2));
+                        if (!m.Success) return null;
+                        return (m.Groups.Count > 1 && m.Groups[1].Success ? m.Groups[1].Value : m.Value).Trim();
+                    }
+                    catch (ArgumentException) { return null; }
+                    catch (System.Text.RegularExpressions.RegexMatchTimeoutException) { return null; }
+            }
+            return text.Length == 0 ? null : text;
+        }
+    }
+
+    static class Blocks
+    {
+        public static void Match(List<ScenarioStep> steps, out Dictionary<int, int> elseOf, out Dictionary<int, int> endOf, out Dictionary<int, int> elseEnd)
+        {
+            elseOf = new Dictionary<int, int>();
+            endOf = new Dictionary<int, int>();
+            elseEnd = new Dictionary<int, int>();
+            var open = new Stack<int>();
+            for (int i = 0; i < steps.Count; i++)
+            {
+                string k = steps[i].Kind;
+                if (k == "if") open.Push(i);
+                else if (k == "else" && open.Count > 0 && !elseOf.ContainsKey(open.Peek())) elseOf[open.Peek()] = i;
+                else if (k == "endif" && open.Count > 0)
+                {
+                    int start = open.Pop();
+                    endOf[start] = i;
+                    int e;
+                    if (elseOf.TryGetValue(start, out e)) elseEnd[e] = i;
+                }
+            }
+            while (open.Count > 0)
+            {
+                int start = open.Pop();
+                endOf[start] = steps.Count - 1;
+                int e;
+                if (elseOf.TryGetValue(start, out e)) elseEnd[e] = steps.Count - 1;
+            }
+        }
+
+        public static int[] Depths(List<ScenarioStep> steps)
+        {
+            var depth = new int[steps.Count];
+            int d = 0;
+            for (int i = 0; i < steps.Count; i++)
+            {
+                string k = steps[i].Kind;
+                if (k == "if") { depth[i] = d; d++; }
+                else if (k == "else") depth[i] = Math.Max(0, d - 1);
+                else if (k == "endif") { d = Math.Max(0, d - 1); depth[i] = d; }
+                else depth[i] = d;
+            }
+            return depth;
+        }
+    }
+
+    static class RepeatSpec
+    {
+        public static string Mode(string option)
+        {
+            string o = (option ?? "").Trim();
+            if (o.StartsWith("while:", StringComparison.OrdinalIgnoreCase) || o.StartsWith("if:", StringComparison.OrdinalIgnoreCase)) return "if";
+            return o == "0" ? "forever" : "count";
+        }
+
+        public static void ParseIf(string option, out string kind, out bool negate, out string arg)
+        {
+            string o = (option ?? "").Trim();
+            kind = "running";
+            negate = false;
+            arg = "";
+            if (o.StartsWith("while:", StringComparison.OrdinalIgnoreCase))
+            {
+                arg = o.Substring(6).Trim();
+                return;
+            }
+            if (!o.StartsWith("if:", StringComparison.OrdinalIgnoreCase)) return;
+            o = o.Substring(3);
+            int colon = o.IndexOf(':');
+            string k = colon >= 0 ? o.Substring(0, colon) : o;
+            arg = colon >= 0 ? o.Substring(colon + 1) : "";
+            negate = k.EndsWith("!");
+            kind = negate ? k.Substring(0, k.Length - 1) : k;
+            if (kind.Length == 0) kind = "running";
+        }
+
+        public static string FormatIf(string kind, bool negate, string arg)
+        {
+            return "if:" + kind + (negate ? "!" : "") + ":" + (arg ?? "").Replace("|", "/");
+        }
+    }
+
+    sealed class ScenarioStep
+    {
+        public static readonly string[] Kinds =
+        {
+            "site", "run", "explorer", "command", "waitwindow", "waitclose", "window", "close", "wait", "repeat", "condition", "if", "else", "endif", "stop", "click", "buffer", "fetch",
+            "type", "keys", "clipboard", "volume", "awake", "pause", "setting", "layout", "notice", "lock", "screenoff", "power"
+        };
+
+        public string Kind = "wait";
+        public string Option = "";
+        public string Value = "";
+        public string Flags = "";
+
+        public string FlagValue(string name)
+        {
+            foreach (string f in Flags.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+                if (f.StartsWith(name + ":", StringComparison.OrdinalIgnoreCase)) return f.Substring(name.Length + 1);
+            return "";
+        }
+
+        public void SetFlagValue(string name, string value)
+        {
+            var list = Flags.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Where(f => !f.StartsWith(name + ":", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (!string.IsNullOrEmpty(value)) list.Add(name + ":" + value.Replace(" ", ""));
+            Flags = string.Join(" ", list.ToArray());
+        }
+
+        public bool Has(string flag) { return (" " + Flags + " ").IndexOf(" " + flag + " ", StringComparison.OrdinalIgnoreCase) >= 0; }
+
+        public void Set(string flag, bool on)
+        {
+            var list = Flags.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Where(f => !f.Equals(flag, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (on) list.Add(flag);
+            Flags = string.Join(" ", list.ToArray());
+        }
+
+        public ScenarioStep Clone() { return (ScenarioStep)MemberwiseClone(); }
+
+        public static ScenarioStep Parse(string text)
+        {
+            string[] parts = text.Split(new[] { '|' }, 3);
+            string kind = parts[0].Trim().ToLowerInvariant();
+            if (Array.IndexOf(Kinds, kind) < 0) return null;
+            string rest = parts.Length > 2 ? parts[2] : "";
+            string flags = "";
+            int bar = rest.IndexOf('|');
+            if (rest.TrimStart().StartsWith("~") && bar >= 0)
+            {
+                flags = rest.Substring(0, bar).Trim().Substring(1).Trim();
+                rest = rest.Substring(bar + 1);
+            }
+            return new ScenarioStep
+            {
+                Kind = kind,
+                Option = parts.Length > 1 ? parts[1].Trim() : "",
+                Value = Config.Unescape(rest.Trim()),
+                Flags = flags
+            };
+        }
+
+        public double Seconds { get { return Durations.Parse(Value); } }
+    }
+
+    sealed class Scenario
+    {
+        public string Name = "";
+        public string Hotkey = "";
+        public bool InTray = true;
+        public bool OnStartup = false;
+        public bool Ask = false;
+        public string Time = "";
+        public string Days = "1111111";
+        public string WhenOpened = "";
+        public string WhenClosed = "";
+        public string Idle = "";
+        public string IdleEvent = "away";
+        public string Event = "";
+        public string EventArg = "";
+        public List<ScenarioStep> Steps = new List<ScenarioStep>();
+
+        public bool DueAt(DateTime now)
+        {
+            TimeSpan at;
+            if (Time.Length == 0 || !ScenarioCondition.TryTime(Time, out at)) return false;
+            return ScenarioCondition.OnDay(Days, now) && now.Hour == at.Hours && now.Minute == at.Minutes;
+        }
+
+        public bool OpensWith(string program) { return NameIn(WhenOpened, program); }
+
+        public bool ClosesWith(string program) { return NameIn(WhenClosed, program); }
+
+        public static IEnumerable<string> Names(string list)
+        {
+            foreach (string part in (list ?? "").Split(','))
+            {
+                string p = part.Trim();
+                if (p.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) p = p.Substring(0, p.Length - 4);
+                if (p.Length > 0) yield return p;
+            }
+        }
+
+        static bool NameIn(string list, string program)
+        {
+            if (program == null) return false;
+            foreach (string p in Names(list))
+                if (p.Equals(program, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        public Scenario Clone()
+        {
+            var copy = (Scenario)MemberwiseClone();
+            copy.Steps = Steps.Select(s => s.Clone()).ToList();
+            return copy;
+        }
+
+        public void SetValue(string key, string val)
+        {
+            switch (key.ToLowerInvariant())
+            {
+                case "name": Name = Config.Unescape(val); break;
+                case "hotkey": Hotkey = val; break;
+                case "tray": InTray = Config.Bool(val); break;
+                case "startup": OnStartup = Config.Bool(val); break;
+                case "ask": Ask = Config.Bool(val); break;
+                case "time": Time = val; break;
+                case "days": Days = val.Length == 7 && val.All(c => c == '0' || c == '1') ? val : "1111111"; break;
+                case "whenopened": WhenOpened = val; break;
+                case "whenclosed": WhenClosed = val; break;
+                case "idle": Idle = val; break;
+                case "idleevent": IdleEvent = val == "back" ? "back" : "away"; break;
+                case "event": Event = val.ToLowerInvariant(); break;
+                case "eventarg": EventArg = Config.Unescape(val); break;
+                case "step":
+                    var step = ScenarioStep.Parse(val);
+                    if (step != null) Steps.Add(step);
+                    break;
+            }
         }
     }
 }

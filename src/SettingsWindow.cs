@@ -19,7 +19,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
-namespace BetterWriting
+namespace DeskHand
 {
     public sealed class AppItem
     {
@@ -33,7 +33,7 @@ namespace BetterWriting
         public static int Run()
         {
             bool created;
-            using (var mutex = new Mutex(true, @"Local\BetterWriting.Settings", out created))
+            using (var mutex = new Mutex(true, @"Local\DeskHand.Settings", out created))
             {
                 if (!created)
                 {
@@ -51,7 +51,7 @@ namespace BetterWriting
         static void ActivateExisting()
         {
             int self = Process.GetCurrentProcess().Id;
-            foreach (var p in Process.GetProcessesByName("BetterWriting"))
+            foreach (var p in Process.GetProcessesByName("DeskHand"))
             {
                 IntPtr h = p.Id == self ? IntPtr.Zero : p.MainWindowHandle;
                 if (h == IntPtr.Zero) continue;
@@ -83,6 +83,11 @@ namespace BetterWriting
 
         void OnWheel(object sender, MouseWheelEventArgs e)
         {
+            var source = e.OriginalSource as Visual;
+            var here = PresentationSource.FromVisual(sv);
+            var there = source == null ? null : PresentationSource.FromVisual(source);
+            if (here != null && there != null && there != here) return;
+
             if (inner != null && inner.IsVisible && IsInside(e.OriginalSource as DependencyObject, inner)
                 && (e.Delta > 0 ? inner.VerticalOffset > 0 : inner.VerticalOffset < inner.ScrollableHeight))
                 return;
@@ -121,7 +126,7 @@ namespace BetterWriting
         }
     }
 
-    sealed class SettingsWindow
+    sealed partial class SettingsWindow
     {
         static readonly string[,] NavItems =
         {
@@ -131,6 +136,7 @@ namespace BetterWriting
             { "snippets", "", "Text shortcuts", "Быстрые вставки" },
             { "apps", "", "Apps", "Программы" },
             { "tools", "\uE90F", "Tools", "Инструменты" },
+            { "scenarios", "\uE768", "Scenarios", "Сценарии" },
             { "system", "", "System", "Система" },
         };
 
@@ -194,7 +200,7 @@ namespace BetterWriting
                 Process.Start(Program.ExePath, "--background");
                 Later(800, UpdateStatus);
             };
-            Get<Button>("GithubLink").Click += delegate { Process.Start("https://github.com/Eastiwckgg/BetterWriting"); };
+            Get<Button>("GithubLink").Click += delegate { Process.Start("https://github.com/Eastiwckgg/DeskHand"); };
             Get<ItemsControl>("RunningApps").AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler((s, e) =>
             {
                 var tag = TagOf(e);
@@ -234,7 +240,7 @@ namespace BetterWriting
             Get<Button>("StartButton").Content = T("Start", "Запустить");
             Get<CheckBox>("Enabled").ToolTip = T("Turn on or pause", "Включить или поставить на паузу");
             Get<TextBlock>("BrowseExeText").Text = T("Choose an .exe file…", "Выбрать файл .exe…");
-            Get<TextBlock>("Footer").Text = T("Version ", "Версия ") + Assembly.GetExecutingAssembly().GetName().Version.ToString(2) + "\n" +
+            Get<TextBlock>("Footer").Text = T("Version ", "Версия ") + Assembly.GetExecutingAssembly().GetName().Version.ToString(3) + "\n" +
                 T("You can close this window, the app keeps working in the tray",
                   "Окно можно закрыть, программа продолжит работать в трее");
             BuildPages();
@@ -249,6 +255,7 @@ namespace BetterWriting
             Get<Grid>("Pages").Children.Clear();
             Get<StackPanel>("Nav").Children.Clear();
             editingSnippet = null;
+            CloseEditor();
             hotkeyRefresh.Clear();
             HideHint();
             BuildUi();
@@ -375,7 +382,7 @@ namespace BetterWriting
                 Section(T("Indicator", "Индикатор")),
                 Card(indicatorRow),
                 Section(T("Languages", "Языки")),
-                Desc(T("BetterWriting works only in the checked keyboard layouts", "BetterWriting работает только в отмеченных раскладках"), 2, 8),
+                Desc(T("DeskHand works only in the checked keyboard layouts", "DeskHand работает только в отмеченных раскладках"), 2, 8),
                 Card(ToggleRow(T("Russian", "Русский"), T("Also Ukrainian and Belarusian layouts", "А также украинская и белорусская раскладки"),
                          c => c.LangRussian, (c, v) => c.LangRussian = v),
                      ToggleRow(T("English", "Английский"), null, c => c.LangEnglish, (c, v) => c.LangEnglish = v),
@@ -441,7 +448,7 @@ namespace BetterWriting
             var addExclude = new Button { Style = St("Btn"), Content = T("+  Add an app", "+  Добавить программу"), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 0) };
             addExclude.Click += delegate
             {
-                OpenPicker(addExclude, T("Choose an app where BetterWriting should not work:", "Выберите программу, в которой BetterWriting не будет работать:"),
+                OpenPicker(addExclude, T("Choose an app where DeskHand should not work:", "Выберите программу, в которой DeskHand не будет работать:"),
                     name => { if (cfg.ExcludeApps.Add(name)) Save(); }, name => !cfg.IsExcluded(name));
             };
             ruleList = new StackPanel();
@@ -464,8 +471,8 @@ namespace BetterWriting
                     c => c.SkipFullscreen, (c, v) => c.SkipFullscreen = v)),
                 Section(T("Never work in", "Не работать совсем")),
                 Card(Padded(Stack(
-                    Desc(T("BetterWriting works in every other app. The list already has apps where letters act as hotkeys or where you write code: terminals, code editors, Figma, Ableton, password managers",
-                           "Во всех остальных программах BetterWriting работает. Сюда заранее добавлены программы, где буквы служат горячими клавишами или пишется код: терминалы, редакторы кода, Figma, Ableton, менеджеры паролей"), 0, 12),
+                    Desc(T("DeskHand works in every other app. The list already has apps where letters act as hotkeys or where you write code: terminals, code editors, Figma, Ableton, password managers",
+                           "Во всех остальных программах DeskHand работает. Сюда заранее добавлены программы, где буквы служат горячими клавишами или пишется код: терминалы, редакторы кода, Figma, Ableton, менеджеры паролей"), 0, 12),
                     appChips, addExclude))),
                 Section(T("Custom rules", "Особые правила")),
                 Desc(T("Turn off single features in a specific app. For example, no capitals in Discord. Crossed-out features do not work in that app",
@@ -498,7 +505,7 @@ namespace BetterWriting
 
             var openIni = new Button { Style = St("Link"), Content = T("Open the settings file", "Открыть файл настроек") };
             openIni.Click += delegate { Process.Start("notepad.exe", "\"" + Program.ConfigPath + "\""); };
-            var quit = new Button { Style = St("Link"), Content = T("Quit BetterWriting", "Выйти из BetterWriting"), Margin = new Thickness(24, 0, 0, 0) };
+            var quit = new Button { Style = St("Link"), Content = T("Quit DeskHand", "Выйти из DeskHand"), Margin = new Thickness(24, 0, 0, 0) };
             quit.Click += delegate
             {
                 Program.Signal(Program.QuitEventName);
@@ -565,6 +572,8 @@ namespace BetterWriting
                            "Текст, который печатают AutoHotkey, Punto Switcher и подобные, не исправляется"),
                          c => c.IgnoreInjected, (c, v) => c.IgnoreInjected = v)),
                 Card(Padded(links)));
+
+            BuildScenariosPage();
         }
 
         void BuildNav()
@@ -680,6 +689,7 @@ namespace BetterWriting
             RebuildPairs(correctionList, cfg.CustomTypos, k => k);
             RebuildSnippets();
             RebuildRules();
+            RebuildScenarioList();
             UpdateStatus();
         }
 
@@ -1131,7 +1141,7 @@ namespace BetterWriting
         {
             var skip = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "BetterWriting", "ApplicationFrameHost", "TextInputHost", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost"
+                "DeskHand", "ApplicationFrameHost", "TextInputHost", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost"
             };
             int session = Process.GetCurrentProcess().SessionId;
             var items = new List<AppItem>();
@@ -1447,9 +1457,9 @@ namespace BetterWriting
                 r["CardBg"] = Brush("#2B2B2B");
                 r["CardBorder"] = Brush("#19000000");
                 r["DividerBrush"] = Brush("#14FFFFFF");
-                r["Text"] = Brush("#F2F2F2");
-                r["TextSecondary"] = Brush("#B8FFFFFF");
-                r["TextTertiary"] = Brush("#80FFFFFF");
+                r["Text"] = Brush("#E6E6E6");
+                r["TextSecondary"] = Brush("#94FFFFFF");
+                r["TextTertiary"] = Brush("#6BFFFFFF");
                 r["ControlBg"] = Brush("#0FFFFFFF");
                 r["ControlHover"] = Brush("#18FFFFFF");
                 r["ControlBorder"] = Brush("#1CFFFFFF");
@@ -1460,13 +1470,14 @@ namespace BetterWriting
                 r["ChipBg"] = Brush("#0FFFFFFF");
                 r["ChipOn"] = Brush("#22FFFFFF");
                 r["ChipOnBorder"] = Brush("#70FFFFFF");
-                r["PopupBg"] = Brush("#2C2C2C");
-                r["ToggleOffBorder"] = Brush("#9AFFFFFF");
+                r["PopupBg"] = Brush("#323232");
+                r["PopupBorder"] = Brush("#3DFFFFFF");
+                r["ToggleOffBorder"] = Brush("#70FFFFFF");
                 r["ToggleOffFill"] = Brush("#08FFFFFF");
-                r["ToggleOffThumb"] = Brush("#CFFFFFFF");
-                r["Accent"] = Brush("#E6E6E6");
-                r["AccentThumb"] = Brush("#1F1F1F");
-                r["AccentLink"] = Brush("#D6D6D6");
+                r["ToggleOffThumb"] = Brush("#A6FFFFFF");
+                r["Accent"] = Brush("#C9BE98");
+                r["AccentThumb"] = Brush("#26261F");
+                r["AccentLink"] = Brush("#CFC5A4");
                 r["BadgeBg"] = Brush("#26FFB347");
                 r["BadgeText"] = Brush("#FFC97A");
                 r["ScrollThumb"] = Brush("#55FFFFFF");
@@ -1491,12 +1502,13 @@ namespace BetterWriting
                 r["ChipOn"] = Brush("#14000000");
                 r["ChipOnBorder"] = Brush("#70000000");
                 r["PopupBg"] = Brush("#F9F9F9");
+                r["PopupBorder"] = Brush("#26000000");
                 r["ToggleOffBorder"] = Brush("#9E000000");
                 r["ToggleOffFill"] = Brush("#05000000");
                 r["ToggleOffThumb"] = Brush("#C2000000");
-                r["Accent"] = Brush("#2B2B2B");
+                r["Accent"] = Brush("#5F6148");
                 r["AccentThumb"] = Brush("#FFFFFF");
-                r["AccentLink"] = Brush("#2B2B2B");
+                r["AccentLink"] = Brush("#4F513B");
                 r["BadgeBg"] = Brush("#1FE08A00");
                 r["BadgeText"] = Brush("#9A5A00");
                 r["ScrollThumb"] = Brush("#5A000000");
@@ -1520,12 +1532,12 @@ namespace BetterWriting
 
         static Stream Resource(string name)
         {
-            return Assembly.GetExecutingAssembly().GetManifestResourceStream("BetterWriting." + name);
+            return Assembly.GetExecutingAssembly().GetManifestResourceStream("DeskHand." + name);
         }
 
         static bool HasResource(string name)
         {
-            return Assembly.GetExecutingAssembly().GetManifestResourceInfo("BetterWriting." + name) != null;
+            return Assembly.GetExecutingAssembly().GetManifestResourceInfo("DeskHand." + name) != null;
         }
 
         void Later(int ms, Action action)

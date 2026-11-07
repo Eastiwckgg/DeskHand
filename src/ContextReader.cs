@@ -3,7 +3,7 @@ using System.Threading;
 using System.Windows.Automation;
 using System.Windows.Automation.Text;
 
-namespace BetterWriting
+namespace DeskHand
 {
     sealed class CaretContext
     {
@@ -42,7 +42,7 @@ namespace BetterWriting
             }
             if (thread == null)
             {
-                thread = new Thread(Loop) { IsBackground = true, Name = "BetterWriting.Context" };
+                thread = new Thread(Loop) { IsBackground = true, Name = "DeskHand.Context" };
                 thread.SetApartmentState(ApartmentState.MTA);
                 thread.Start();
             }

@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
-namespace BetterWriting
+namespace DeskHand
 {
     sealed class Hooks : Native
     {
@@ -184,7 +184,7 @@ namespace BetterWriting
             fgExcluded = pid == selfPid || (name != null && baseCfg.IsExcluded(name));
             engine.Cfg = baseCfg.ForApp(name);
             engine.BothLayouts = HasLayout(Lang.Ru) && HasLayout(Lang.En);
-            fgIsSettings = !fgExcluded && string.Equals(name, "BetterWriting", StringComparison.OrdinalIgnoreCase);
+            fgIsSettings = !fgExcluded && string.Equals(name, "DeskHand", StringComparison.OrdinalIgnoreCase);
             if (fgIsSettings && demoFocus == null)
             {
                 EventWaitHandle h;
@@ -277,6 +277,71 @@ namespace BetterWriting
             keys.Add(Key(0x56, '\0', KEYEVENTF_KEYUP));
             keys.Add(Key(VK_CONTROL, '\0', KEYEVENTF_KEYUP));
             SendInput((uint)keys.Count, keys.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+        }
+
+        public static void ReleaseModifiers()
+        {
+            var keys = new System.Collections.Generic.List<INPUT>();
+            if (Pressed(VK_MENU) || Pressed(VK_LWIN) || Pressed(VK_RWIN))
+            {
+                keys.Add(Key(0xFF, '\0', 0));
+                keys.Add(Key(0xFF, '\0', KEYEVENTF_KEYUP));
+            }
+            foreach (int vk in new[] { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, VK_LWIN, VK_RWIN })
+                if (Pressed(vk)) keys.Add(Key(vk, '\0', KEYEVENTF_KEYUP));
+            if (keys.Count > 0) SendInput((uint)keys.Count, keys.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+        }
+
+        public static bool ModifiersHeld()
+        {
+            foreach (int vk in new[] { VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN })
+                if (Pressed(vk)) return true;
+            return false;
+        }
+
+        public static void TypeText(string text)
+        {
+            var keys = new System.Collections.Generic.List<INPUT>();
+            foreach (char ch in text)
+            {
+                if (ch == '\r') continue;
+                if (ch == '\n')
+                {
+                    keys.Add(Key(VK_SHIFT, '\0', 0));
+                    keys.Add(Key(VK_RETURN, '\0', 0));
+                    keys.Add(Key(VK_RETURN, '\0', KEYEVENTF_KEYUP));
+                    keys.Add(Key(VK_SHIFT, '\0', KEYEVENTF_KEYUP));
+                    continue;
+                }
+                keys.Add(Key(0, ch, KEYEVENTF_UNICODE));
+                keys.Add(Key(0, ch, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
+            }
+            if (keys.Count > 0) SendInput((uint)keys.Count, keys.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+        }
+
+        public static void PressKeys(uint mods, int vk)
+        {
+            var down = new System.Collections.Generic.List<int>();
+            if ((mods & Hotkey.ModWin) != 0) down.Add(VK_LWIN);
+            if ((mods & Hotkey.ModControl) != 0) down.Add(VK_CONTROL);
+            if ((mods & Hotkey.ModAlt) != 0) down.Add(VK_MENU);
+            if ((mods & Hotkey.ModShift) != 0) down.Add(VK_SHIFT);
+            bool extended = (vk >= 0x21 && vk <= 0x2E) || (vk >= 0xA6 && vk <= 0xB7) || vk == 0x5D;
+            uint ext = extended ? KEYEVENTF_EXTENDEDKEY : 0;
+            var keys = new System.Collections.Generic.List<INPUT>();
+            foreach (int m in down) keys.Add(Key(m, '\0', 0));
+            keys.Add(Key(vk, '\0', ext));
+            keys.Add(Key(vk, '\0', ext | KEYEVENTF_KEYUP));
+            for (int i = down.Count - 1; i >= 0; i--) keys.Add(Key(down[i], '\0', KEYEVENTF_KEYUP));
+            SendInput((uint)keys.Count, keys.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+        }
+
+        public static void SwitchForegroundLayout(string which)
+        {
+            IntPtr fg = GetForegroundWindow();
+            if (fg == IntPtr.Zero) return;
+            IntPtr hkl = which == "ru" ? FindLayout(Lang.Ru) : which == "en" ? FindLayout(Lang.En) : (IntPtr)1;
+            if (hkl != IntPtr.Zero) PostMessage(fg, WM_INPUTLANGCHANGEREQUEST, which == "next" ? (IntPtr)2 : IntPtr.Zero, hkl);
         }
 
         IntPtr KeyboardProc(int nCode, IntPtr wParam, IntPtr lParam)

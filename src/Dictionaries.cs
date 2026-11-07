@@ -6,7 +6,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 
-namespace BetterWriting
+namespace DeskHand
 {
     enum Lang { Other, Ru, En }
 
@@ -76,7 +76,7 @@ namespace BetterWriting
 
         static WordSet Load(string lang)
         {
-            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("BetterWriting.dict." + lang + ".txt.gz"))
+            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("DeskHand.dict." + lang + ".txt.gz"))
             using (var gz = new GZipStream(s, CompressionMode.Decompress))
             using (var reader = new StreamReader(gz, Encoding.UTF8))
                 return new WordSet(Lines(reader));

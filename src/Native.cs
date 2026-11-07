@@ -2,7 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace BetterWriting
+namespace DeskHand
 {
     abstract class Native
     {
@@ -33,6 +33,34 @@ namespace BetterWriting
         public const uint WM_INPUTLANGCHANGEREQUEST = 0x50;
         public const uint ES_CONTINUOUS = 0x80000000, ES_SYSTEM_REQUIRED = 1, ES_DISPLAY_REQUIRED = 2;
         public const uint ULW_ALPHA = 2;
+
+        public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+        public const uint WM_CLOSE = 0x10, WM_SYSCOMMAND = 0x112, GW_OWNER = 4;
+
+        [DllImport("user32.dll")]
+        public static extern bool EnumWindows(EnumWindowsProc fn, IntPtr lParam);
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
+        [DllImport("user32.dll")]
+        public static extern bool IsWindow(IntPtr hwnd);
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr hwnd);
+        [DllImport("user32.dll")]
+        public static extern bool LockWorkStation();
+        [DllImport("user32.dll")]
+        public static extern bool SetCursorPos(int x, int y);
+        [DllImport("user32.dll")]
+        public static extern bool GetCursorPos(out POINT p);
+        [DllImport("user32.dll")]
+        public static extern void mouse_event(uint flags, int dx, int dy, int data, IntPtr extra);
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindowAsync(IntPtr hwnd, int cmd);
+        [DllImport("user32.dll")]
+        public static extern bool IsZoomed(IntPtr hwnd);
+        [DllImport("user32.dll")]
+        public static extern bool IsIconic(IntPtr hwnd);
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out RECT value, int size);
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);

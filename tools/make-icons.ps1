@@ -2,8 +2,8 @@
 $root = Split-Path $PSScriptRoot
 $src = [Drawing.Bitmap]::FromFile((Join-Path $root 'assets\logo-source.png'))
 
-$side = [int]($src.Width * 0.9)
-$cropX = [int](($src.Width - $side) / 2) + 8
+$side = [int]($src.Width * 0.86)
+$cropX = [int](($src.Width - $side) / 2)
 $cropY = [int](($src.Height - $side) / 2)
 
 function RoundedPath([int]$size) {

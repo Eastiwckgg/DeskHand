@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
@@ -8,28 +9,42 @@ using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-namespace BetterWriting
+namespace DeskHand
 {
     static class Program
     {
         const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        const string AppName = "BetterWriting";
-        public const string ReloadEventName = @"Local\BetterWriting.Reload";
-        public const string QuitEventName = @"Local\BetterWriting.Quit";
-        public const string DemoEventName = @"Local\BetterWriting.DemoFocus";
-        public const string CloseSettingsEventName = @"Local\BetterWriting.CloseSettings";
+        const string AppName = "DeskHand";
+        const string LegacyName = "BetterWriting";
+        public const string ReloadEventName = @"Local\DeskHand.Reload";
+        public const string QuitEventName = @"Local\DeskHand.Quit";
+        public const string DemoEventName = @"Local\DeskHand.DemoFocus";
+        public const string CloseSettingsEventName = @"Local\DeskHand.CloseSettings";
+        public const string RunEventName = @"Local\DeskHand.RunScenario";
 
         public static readonly string ExePath = Process.GetCurrentProcess().MainModule.FileName;
         public static readonly string ConfigPath = ResolveConfigPath();
 
         static string ResolveConfigPath()
         {
-            const string FileName = "BetterWriting.ini";
+            const string FileName = "DeskHand.ini";
             string appData = Environment.GetEnvironmentVariable("APPDATA");
             if (string.IsNullOrEmpty(appData)) appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            string shared = Path.Combine(appData, "BetterWriting", FileName);
+            string shared = Path.Combine(appData, "DeskHand", FileName);
             Directory.CreateDirectory(Path.GetDirectoryName(shared));
             if (File.Exists(shared)) return shared;
+
+            string legacy = Path.Combine(appData, LegacyName, LegacyName + ".ini");
+            try
+            {
+                if (File.Exists(legacy))
+                {
+                    File.Copy(legacy, shared);
+                    return shared;
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
 
             string local = Path.Combine(Path.GetDirectoryName(ExePath), FileName);
             string old = AutostartExe();
@@ -83,21 +98,24 @@ namespace BetterWriting
             if (arg == "--autostart-on") { SetAutostart(true); return 0; }
             if (arg == "--autostart-off") { SetAutostart(false); return 0; }
             if (arg == "--settings") return SettingsApp.Run();
+            if (arg == "--run") return args.Length > 1 && RequestRun(args[1]) ? 0 : 1;
 
             bool created;
-            using (var mutex = new Mutex(true, @"Local\BetterWriting.SingleInstance", out created))
+            using (var mutex = new Mutex(true, @"Local\DeskHand.SingleInstance", out created))
             {
                 if (!created) return SettingsApp.Run();
-                RunTray(arg != "--background");
+                Signal(@"Local\" + LegacyName + ".CloseSettings");
+                Signal(@"Local\" + LegacyName + ".Quit");
+                RunTray(arg != "--background", Array.IndexOf(args, "--startup") > 0);
                 GC.KeepAlive(mutex);
             }
             return 0;
         }
 
-        static void RunTray(bool showSettings)
+        static void RunTray(bool showSettings, bool startup)
         {
             RepairAutostart();
-            using (new TrayApp())
+            using (new TrayApp(startup))
             {
                 if (showSettings) OpenSettings();
                 Application.Run();
@@ -114,6 +132,18 @@ namespace BetterWriting
             EventWaitHandle h;
             if (!EventWaitHandle.TryOpenExisting(ReloadEventName, out h)) return false;
             h.Dispose();
+            return true;
+        }
+
+        public static string RunRequestPath { get { return Path.Combine(Path.GetDirectoryName(ConfigPath), "run-request.txt"); } }
+
+        public static bool RequestRun(string name)
+        {
+            if (!IsMainRunning()) return false;
+            try { File.WriteAllText(RunRequestPath, name, System.Text.Encoding.UTF8); }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+            Signal(RunEventName);
             return true;
         }
 
@@ -158,8 +188,14 @@ namespace BetterWriting
         {
             try
             {
+                MigrateAutostart();
                 string old = AutostartExe();
-                if (old == null || string.Equals(old, ExePath, StringComparison.OrdinalIgnoreCase)) return;
+                if (old == null) return;
+                if (string.Equals(old, ExePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!AutostartHasFlag()) SetAutostart(true);
+                    return;
+                }
                 if (File.Exists(old) && IsSameOrNewer(old)) return;
                 SetAutostart(true);
             }
@@ -168,11 +204,47 @@ namespace BetterWriting
             catch (System.Security.SecurityException) { }
         }
 
+        static void MigrateAutostart()
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(RunKey))
+            {
+                if (key == null || key.GetValue(AppName) != null) return;
+                string val = key.GetValue(LegacyName) as string;
+                if (val == null) return;
+                string old = val.Trim();
+                if (old.StartsWith("\""))
+                {
+                    int end = old.IndexOf('"', 1);
+                    old = end > 0 ? old.Substring(1, end - 1) : old.Substring(1);
+                }
+                else
+                {
+                    int args = old.IndexOf(" --", StringComparison.Ordinal);
+                    if (args > 0) old = old.Substring(0, args);
+                }
+                if (File.Exists(old) && IsSameOrNewer(old)) return;
+            }
+            SetAutostart(true);
+        }
+
+        static bool AutostartHasFlag()
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(RunKey))
+            {
+                var val = key == null ? null : key.GetValue(AppName) as string;
+                return val != null && val.IndexOf("--startup", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+        }
+
         public static void SetAutostart(bool on)
         {
             using (var key = Registry.CurrentUser.CreateSubKey(RunKey))
             {
-                if (on) key.SetValue(AppName, "\"" + ExePath + "\" --background");
+                if (on)
+                {
+                    key.SetValue(AppName, "\"" + ExePath + "\" --background --startup");
+                    if (key.GetValue(LegacyName) != null) key.DeleteValue(LegacyName);
+                }
                 else if (key.GetValue(AppName) != null) key.DeleteValue(AppName);
             }
         }
@@ -240,8 +312,11 @@ namespace BetterWriting
 
     sealed class HotkeyWindow : NativeWindow, IDisposable
     {
+        const int ExtraBase = 1000;
         readonly Action[] actions;
         readonly string[] current;
+        string[] extra = new string[0];
+        Action<int> extraRun;
 
         public HotkeyWindow(params Action[] actions)
         {
@@ -265,12 +340,27 @@ namespace BetterWriting
             }
         }
 
+        public void ApplyExtra(string[] texts, Action<int> run)
+        {
+            extraRun = run;
+            for (int i = 0; i < extra.Length; i++) Native.UnregisterHotKey(Handle, ExtraBase + i);
+            extra = texts;
+            for (int i = 0; i < extra.Length; i++)
+            {
+                uint mods, vk;
+                if (Hotkey.TryParse(extra[i], out mods, out vk))
+                    Native.RegisterHotKey(Handle, ExtraBase + i, mods | Hotkey.ModNoRepeat, vk);
+            }
+        }
+
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == Native.WM_HOTKEY)
             {
                 int id = (int)m.WParam - 1;
                 if (id >= 0 && id < actions.Length) actions[id]();
+                int x = (int)m.WParam - ExtraBase;
+                if (x >= 0 && x < extra.Length && extraRun != null) extraRun(x);
             }
             base.WndProc(ref m);
         }
@@ -278,11 +368,12 @@ namespace BetterWriting
         public void Dispose()
         {
             for (int id = 0; id < actions.Length; id++) Native.UnregisterHotKey(Handle, id + 1);
+            for (int i = 0; i < extra.Length; i++) Native.UnregisterHotKey(Handle, ExtraBase + i);
             DestroyHandle();
         }
     }
 
-    sealed class TrayApp : IDisposable
+    sealed class TrayApp : IDisposable, IScenarioHost
     {
         readonly NotifyIcon tray = new NotifyIcon();
         readonly HotkeyWindow hotkey;
@@ -294,13 +385,17 @@ namespace BetterWriting
         readonly Engine engine;
         readonly Hooks hooks;
         Config cfg;
-        readonly ToolStripMenuItem miSettings, miEnabled, miExclude, miExit;
+        readonly ToolStripMenuItem miSettings, miEnabled, miExclude, miExit, miScenarios;
+        readonly ToolStripSeparator miScenariosLine;
+        readonly ScenarioRunner scenarios;
+        readonly SynchronizationContext uiContext;
         readonly ToolStripMenuItem miAwake, miAwake1, miAwake3, miAwakeForever, miAwakeScreen, miAwakeOff;
         readonly System.Windows.Forms.Timer awakeCheck = new System.Windows.Forms.Timer { Interval = 30000 };
-        readonly EventWaitHandle reloadEvent, quitEvent;
-        readonly RegisteredWaitHandle reloadWait, quitWait;
+        ScenarioTriggers triggers;
+        readonly EventWaitHandle reloadEvent, quitEvent, runEvent;
+        readonly RegisteredWaitHandle reloadWait, quitWait, runWait;
 
-        public TrayApp()
+        public TrayApp(bool startup)
         {
             cfg = Config.Load(Program.ConfigPath);
             Loc.Apply(cfg);
@@ -323,6 +418,8 @@ namespace BetterWriting
             });
             miAwakeOff = new ToolStripMenuItem("", null, delegate { StopAwake(); });
             miAwake = new ToolStripMenuItem("");
+            miScenarios = new ToolStripMenuItem("");
+            miScenariosLine = new ToolStripSeparator();
             miAwake.DropDownItems.AddRange(new ToolStripItem[]
             {
                 miAwake1, miAwake3, miAwakeForever, new ToolStripSeparator(), miAwakeScreen, miAwakeOff,
@@ -334,6 +431,8 @@ namespace BetterWriting
                 miEnabled, miExclude,
                 new ToolStripSeparator(),
                 miAwake,
+                miScenariosLine,
+                miScenarios,
                 new ToolStripSeparator(),
                 miExit = new ToolStripMenuItem("", null, delegate
                 {
@@ -345,6 +444,7 @@ namespace BetterWriting
             {
                 menu.Renderer = new TrayMenuRenderer(Program.IsDark());
                 miAwake.DropDown.Renderer = menu.Renderer;
+                miScenarios.DropDown.Renderer = menu.Renderer;
                 RefreshMenu();
             };
 
@@ -354,6 +454,8 @@ namespace BetterWriting
             tray.Visible = true;
 
             var ui = SynchronizationContext.Current;
+            uiContext = ui;
+            scenarios = new ScenarioRunner(this);
             tools = new WindowTools(ui);
             tools.IndicatorSize = cfg.IndicatorSize;
             hotkey = new HotkeyWindow(TogglePause, delegate { tools.TogglePinForeground(); }, PasteAsPlainText, ToggleAwake);
@@ -393,6 +495,22 @@ namespace BetterWriting
                 delegate { ui.Post(delegate { Reload(); }, null); }, null, -1, false);
             quitWait = ThreadPool.RegisterWaitForSingleObject(quitEvent,
                 delegate { ui.Post(delegate { Application.Exit(); }, null); }, null, -1, true);
+            runEvent = new EventWaitHandle(false, EventResetMode.AutoReset, Program.RunEventName);
+            runWait = ThreadPool.RegisterWaitForSingleObject(runEvent,
+                delegate { ui.Post(delegate { RunRequested(); }, null); }, null, -1, false);
+
+            if (startup)
+            {
+                var later = new System.Windows.Forms.Timer { Interval = 5000 };
+                later.Tick += delegate
+                {
+                    later.Stop();
+                    later.Dispose();
+                    foreach (var sc in cfg.Scenarios)
+                        if (sc.OnStartup) scenarios.Run(sc);
+                };
+                later.Start();
+            }
 
             var trim = new System.Windows.Forms.Timer { Interval = 5000 };
             trim.Tick += delegate { trim.Stop(); trim.Dispose(); TrimMemory(); };
@@ -409,6 +527,94 @@ namespace BetterWriting
         void ApplyHotkeys()
         {
             hotkey.Apply(cfg.PauseHotkey, cfg.PinHotkey, cfg.PlainPasteHotkey, cfg.KeepAwakeHotkey);
+            var list = cfg.Scenarios;
+            var keys = new string[list.Count];
+            for (int i = 0; i < keys.Length; i++) keys[i] = list[i].Hotkey;
+            hotkey.ApplyExtra(keys, i => { if (i < list.Count) scenarios.Run(list[i]); });
+            if (triggers == null) triggers = new ScenarioTriggers(uiContext, sc => scenarios.Run(sc));
+            triggers.Apply(cfg);
+        }
+
+        void RunRequested()
+        {
+            string name;
+            try
+            {
+                name = File.ReadAllText(Program.RunRequestPath).Trim();
+                File.Delete(Program.RunRequestPath);
+            }
+            catch (IOException) { return; }
+            catch (UnauthorizedAccessException) { return; }
+            Reload();
+            foreach (var sc in cfg.Scenarios)
+                if (string.Equals(sc.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    scenarios.Run(sc);
+                    return;
+                }
+        }
+
+        public string Render(string text) { return engine.RenderVariables(text); }
+
+        public void Notice(string text)
+        {
+            uiContext.Post(delegate { tools.ShowNotice("", text); }, null);
+        }
+
+        public void Awake(string mode)
+        {
+            uiContext.Post(delegate
+            {
+                bool on = cfg.KeepAwakeActive(DateTime.Now);
+                if (mode == "on" || (mode != "off" && !on)) StartAwake(cfg.KeepAwakeHours);
+                else StopAwake();
+            }, null);
+        }
+
+        public void Pause(string mode)
+        {
+            uiContext.Post(delegate
+            {
+                bool on = mode == "resume" || (mode != "pause" && !cfg.Enabled);
+                if (on != cfg.Enabled) SetEnabled(on);
+            }, null);
+        }
+
+        public bool Confirm(string text)
+        {
+            bool yes = false;
+            uiContext.Send(delegate { yes = ConfirmPopup.Ask(text, Loc.T("Yes", "Да"), Loc.T("No", "Нет")); }, null);
+            return yes;
+        }
+
+        public bool AskToRun(string name)
+        {
+            bool yes = false;
+            uiContext.Send(delegate
+            {
+                yes = ConfirmPopup.Ask(Loc.T("Run the scenario “", "Запустить сценарий «") + name + Loc.T("”?", "»?"),
+                    Loc.T("Run", "Запустить"), Loc.T("Not now", "Не сейчас"));
+            }, null);
+            return yes;
+        }
+
+        public void SetToggle(string key, string mode)
+        {
+            uiContext.Post(delegate
+            {
+                bool? now = cfg.GetToggle(key);
+                if (now == null) return;
+                bool on = mode == "on" || (mode != "off" && !now.Value);
+                cfg.SetToggle(key, on);
+                cfg.Save(Program.ConfigPath);
+                Reload();
+                tools.ShowNotice("\uE713", ToggleNames.Title(key) + ": " + (on ? Loc.T("on", "вкл") : Loc.T("off", "выкл")));
+            }, null);
+        }
+
+        public void AfterTyping()
+        {
+            uiContext.Post(delegate { if (cfg.Enabled) hooks.AfterExternalEdit(); }, null);
         }
 
         void StartAwake(int hours)
@@ -471,7 +677,7 @@ namespace BetterWriting
 
         void UpdateTrayText()
         {
-            string state = cfg.Enabled ? Loc.T("BetterWriting: on", "BetterWriting: работает") : Loc.T("BetterWriting: paused", "BetterWriting: на паузе");
+            string state = cfg.Enabled ? Loc.T("DeskHand: on", "DeskHand: работает") : Loc.T("DeskHand: paused", "DeskHand: на паузе");
             tray.Text = cfg.KeepAwakeActive(DateTime.Now) ? state + Loc.T(", staying awake", ", не засыпает") : state;
         }
 
@@ -499,7 +705,7 @@ namespace BetterWriting
         void TogglePause()
         {
             SetEnabled(!cfg.Enabled);
-            tray.ShowBalloonTip(1500, "BetterWriting",
+            tray.ShowBalloonTip(1500, "DeskHand",
                 cfg.Enabled ? Loc.T("On", "Работает") : Loc.T("Paused", "На паузе"), ToolTipIcon.None);
         }
 
@@ -524,7 +730,7 @@ namespace BetterWriting
         void Reload()
         {
             try { cfg = Config.Load(Program.ConfigPath); }
-            catch (Exception ex) { MessageBox.Show(Loc.T("Could not read the settings:\n", "Не удалось прочитать настройки:\n") + ex.Message, "BetterWriting"); }
+            catch (Exception ex) { MessageBox.Show(Loc.T("Could not read the settings:\n", "Не удалось прочитать настройки:\n") + ex.Message, "DeskHand"); }
             Loc.Apply(cfg);
             Program.Theme = cfg.Theme;
             hooks.SetConfig(cfg);
@@ -558,11 +764,30 @@ namespace BetterWriting
             miAwakeForever.Checked = awake && cfg.KeepAwakeHours != 1 && cfg.KeepAwakeHours != 3;
             miAwakeScreen.Checked = cfg.KeepAwakeScreen;
             miAwakeOff.Visible = awake;
+
+            miScenarios.Text = Loc.T("Scenarios", "Сценарии");
+            miScenarios.DropDownItems.Clear();
+            foreach (var sc in cfg.Scenarios)
+            {
+                if (!sc.InTray) continue;
+                var item = sc;
+                miScenarios.DropDownItems.Add(new ToolStripMenuItem(sc.Name, null, delegate { scenarios.Run(item); })
+                {
+                    ShortcutKeyDisplayString = sc.Hotkey
+                });
+            }
+            if (scenarios.AnyRunning)
+            {
+                if (miScenarios.DropDownItems.Count > 0) miScenarios.DropDownItems.Add(new ToolStripSeparator());
+                miScenarios.DropDownItems.Add(new ToolStripMenuItem(Loc.T("Stop running scenarios", "Остановить сценарии"), null,
+                    delegate { scenarios.StopAll(); }));
+            }
+            miScenarios.Visible = miScenariosLine.Visible = miScenarios.DropDownItems.Count > 0;
         }
 
         static Icon LoadIcon(string name)
         {
-            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("BetterWriting." + name))
+            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("DeskHand." + name))
                 return new Icon(s, SystemInformation.SmallIconSize);
         }
 
@@ -575,6 +800,10 @@ namespace BetterWriting
         {
             reloadWait.Unregister(null);
             quitWait.Unregister(null);
+            runWait.Unregister(null);
+            runEvent.Dispose();
+            if (triggers != null) triggers.Dispose();
+            scenarios.StopAll();
             reloadEvent.Dispose();
             quitEvent.Dispose();
             watchdog.Dispose();

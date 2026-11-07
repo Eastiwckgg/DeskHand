@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace BetterWriting
+namespace DeskHand
 {
     struct EngineAction
     {
@@ -467,7 +467,7 @@ namespace BetterWriting
             return true;
         }
 
-        string RenderVariables(string text)
+        public string RenderVariables(string text)
         {
             if (text.IndexOf('{') < 0) return text;
             var sb = new StringBuilder();

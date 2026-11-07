@@ -1,8 +1,9 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 
-namespace BetterWriting
+namespace DeskHand
 {
     static class EngineTests
     {
@@ -236,8 +237,175 @@ namespace BetterWriting
             Expect(rules.ForApp("chrome").Capitalize, "без правила всё включено");
             Check(rules.ForApp("Telegram"), "привет  мир", "привет  мир");
 
+            var withScenario = Fresh();
+            var sc = new Scenario { Name = "Работа | тест", Hotkey = "Ctrl+Alt+I", InTray = false, OnStartup = true };
+            sc.Steps.Add(new ScenarioStep { Kind = "site", Option = "window", Value = "https://example.com/?a=1|2" });
+            sc.Steps.Add(new ScenarioStep { Kind = "wait", Value = "10" });
+            sc.Steps.Add(new ScenarioStep { Kind = "type", Value = "строка\nвторая \\ конец" });
+            sc.Steps.Add(new ScenarioStep { Kind = "close", Option = "program" });
+            withScenario.Scenarios.Add(sc);
+            withScenario.Scenarios.Add(new Scenario { Name = "Второй" });
+            string scenarioPath = Path.Combine(Path.GetTempPath(), "bw-sc-" + Guid.NewGuid().ToString("N") + ".ini");
+            withScenario.Save(scenarioPath);
+            var scLoaded = Config.Load(scenarioPath);
+            File.Delete(scenarioPath);
+            Expect(scLoaded.Scenarios.Count == 2 && scLoaded.Scenarios[1].Name == "Второй" && scLoaded.Scenarios[1].InTray, "scenarios survive saving");
+            var first = scLoaded.Scenarios[0];
+            Expect(first.Name == "Работа | тест" && first.Hotkey == "Ctrl+Alt+I" && !first.InTray && first.OnStartup && first.Steps.Count == 4, "scenario fields survive saving");
+            Expect(first.Steps[0].Kind == "site" && first.Steps[0].Option == "window" && first.Steps[0].Value == "https://example.com/?a=1|2", "a site step survives saving");
+            Expect(first.Steps[1].Seconds == 10 && first.Steps[2].Value == "строка\nвторая \\ конец" && first.Steps[3].Option == "program", "steps keep their values");
+            Expect(new ScenarioStep { Kind = "wait", Value = "0,5" }.Seconds == 0.5 && new ScenarioStep { Kind = "wait", Value = "abc" }.Seconds == 0, "wait seconds are parsed");
+            Expect(ScenarioStep.Parse("unknown | x | y") == null, "an unknown step is skipped");
+            uint keyMods;
+            int keyVk;
+            Expect(KeyNames.TryParse("Ctrl+W", out keyMods, out keyVk) && keyMods == Hotkey.ModControl && keyVk == 0x57, "Ctrl+W is parsed");
+            Expect(KeyNames.TryParse("Enter", out keyMods, out keyVk) && keyMods == 0 && keyVk == 0x0D, "a key without modifiers is parsed");
+            Expect(KeyNames.TryParse("Win+D", out keyMods, out keyVk) && keyMods == Hotkey.ModWin && keyVk == 0x44, "Win+D is parsed");
+            Expect(KeyNames.Format(true, false, true, true, 0x25) == "Win+Ctrl+Shift+Left" && !KeyNames.TryParse("Ctrl+W+Q", out keyMods, out keyVk), "key names are formatted and checked");
+
+            var timed = Fresh();
+            var morning = new Scenario { Name = "Утро", Time = "09:05", Days = "1111100", WhenOpened = "Discord, Telegram.exe" };
+            morning.Steps.Add(new ScenarioStep { Kind = "repeat", Option = "0", Value = "1" });
+            morning.Steps.Add(new ScenarioStep { Kind = "volume", Option = "set", Value = "30" });
+            timed.Scenarios.Add(morning);
+            string timedPath = Path.Combine(Path.GetTempPath(), "bw-time-" + Guid.NewGuid().ToString("N") + ".ini");
+            timed.Save(timedPath);
+            var timedLoaded = Config.Load(timedPath).Scenarios[0];
+            File.Delete(timedPath);
+            Expect(timedLoaded.Time == "09:05" && timedLoaded.Days == "1111100" && timedLoaded.WhenOpened == "Discord, Telegram.exe" && timedLoaded.Steps.Count == 2, "triggers survive saving");
+            Expect(timedLoaded.DueAt(new DateTime(2026, 11, 9, 9, 5, 30)) && !timedLoaded.DueAt(new DateTime(2026, 11, 9, 9, 6, 0)), "a schedule fires only in its minute");
+            Expect(!timedLoaded.DueAt(new DateTime(2026, 11, 8, 9, 5, 0)), "a schedule skips unchecked days");
+            Expect(new Scenario { Time = "7:30" }.DueAt(new DateTime(2026, 11, 9, 7, 30, 0)), "a one digit hour works");
+            Expect(timedLoaded.OpensWith("discord") && timedLoaded.OpensWith("Telegram") && !timedLoaded.OpensWith("chrome"), "the program trigger matches names");
+            string rawPath = WriteTemp("[Scenario]\nName = x\nDays = 12\n");
+            Expect(Config.Load(rawPath).Scenarios[0].Days == "1111111", "broken days fall back to every day");
+            File.Delete(rawPath);
+            File.Delete(rawPath + ".v1.bak");
+
+            Expect(Durations.Parse("5") == 5 && Durations.Parse("5s") == 5 && Durations.Parse("2m") == 120 && Durations.Parse("1,5h") == 5400 && Durations.Parse("") == 0 && Durations.Parse("x") == 0, "durations are parsed");
+            string dn, du;
+            Durations.Split("15m", out dn, out du);
+            Expect(dn == "15" && du == "m" && Durations.Join("15", "m") == "15m" && Durations.Join("7", "s") == "7" && Durations.Join("", "h") == "", "durations split and join");
+            Expect(new ScenarioStep { Kind = "wait", Value = "2m" }.Seconds == 120, "a wait step understands minutes");
+            string ck;
+            bool cneg;
+            int cskip;
+            ScenarioCondition.Parse("running!:skip3", out ck, out cneg, out cskip);
+            Expect(ck == "running" && cneg && cskip == 3 && ScenarioCondition.Format(ck, cneg, cskip) == "running!:skip3", "a condition is parsed and written back");
+            ScenarioCondition.Parse("wifi:stop", out ck, out cneg, out cskip);
+            Expect(ck == "wifi" && !cneg && cskip == 0, "a stopping condition is parsed");
+            Expect(ScenarioCondition.InTimeRange("09:00-18:00", new DateTime(2026, 1, 1, 12, 0, 0)) && !ScenarioCondition.InTimeRange("09:00-18:00", new DateTime(2026, 1, 1, 18, 0, 0)), "a time range works");
+            Expect(ScenarioCondition.InTimeRange("22:00-06:00", new DateTime(2026, 1, 1, 23, 30, 0)) && ScenarioCondition.InTimeRange("22:00-06:00", new DateTime(2026, 1, 1, 5, 0, 0)) && !ScenarioCondition.InTimeRange("22:00-06:00", new DateTime(2026, 1, 1, 12, 0, 0)), "a range over midnight works");
+            Expect(ScenarioCondition.OnDay("1111100", new DateTime(2026, 11, 9)) && !ScenarioCondition.OnDay("1111100", new DateTime(2026, 11, 8)), "day of the week works");
+            var full = Fresh();
+            var game = new Scenario { Name = "Игра", Ask = true, WhenClosed = "Game", Idle = "15m", IdleEvent = "back", Event = "device-in", EventArg = "Headphones | 2" };
+            game.Steps.Add(new ScenarioStep { Kind = "condition", Option = "running!:skip2", Value = "Steam" });
+            game.Steps.Add(new ScenarioStep { Kind = "waitclose", Option = "1h", Value = "Game" });
+            game.Steps.Add(new ScenarioStep { Kind = "repeat", Option = "while:Game", Value = "1" });
+            full.Scenarios.Add(game);
+            string fullPath = Path.Combine(Path.GetTempPath(), "bw-full-" + Guid.NewGuid().ToString("N") + ".ini");
+            full.Save(fullPath);
+            var g = Config.Load(fullPath).Scenarios[0];
+            File.Delete(fullPath);
+            Expect(g.Ask && g.WhenClosed == "Game" && g.Idle == "15m" && g.IdleEvent == "back" && g.Event == "device-in" && g.EventArg == "Headphones | 2", "new triggers survive saving");
+            Expect(g.Steps.Count == 3 && g.Steps[0].Option == "running!:skip2" && g.Steps[1].Option == "1h" && g.Steps[2].Option == "while:Game", "new steps survive saving");
+            Expect(g.ClosesWith("game") && !g.OpensWith("game"), "the close trigger matches names");
+
+            var flagged = new ScenarioStep { Kind = "run", Option = "-x", Value = "C:\\a|b.exe" };
+            flagged.Set("wait", true);
+            Expect(flagged.Has("wait") && flagged.Flags == "wait", "a step flag is set");
+            var withFlags = Fresh();
+            var fs = new Scenario { Name = "F" };
+            fs.Steps.Add(flagged);
+            fs.Steps.Add(new ScenarioStep { Kind = "type", Value = "~не флаг | текст" });
+            fs.Steps.Add(new ScenarioStep { Kind = "setting", Option = "LayoutIndicator", Value = "off" });
+            fs.Steps.Add(new ScenarioStep { Kind = "window", Option = "left", Value = "step:1" });
+            withFlags.Scenarios.Add(fs);
+            string flagPath = Path.Combine(Path.GetTempPath(), "bw-flag-" + Guid.NewGuid().ToString("N") + ".ini");
+            withFlags.Save(flagPath);
+            var fl = Config.Load(flagPath).Scenarios[0];
+            File.Delete(flagPath);
+            Expect(fl.Steps[0].Has("wait") && fl.Steps[0].Option == "-x" && fl.Steps[0].Value == "C:\\a|b.exe", "flags survive saving and the value keeps its bar");
+            Expect(fl.Steps[1].Value == "~не флаг | текст" && fl.Steps[1].Flags == "", "a value that starts with a tilde is not a flag");
+            Expect(fl.Steps[2].Option == "LayoutIndicator" && fl.Steps[2].Value == "off" && fl.Steps[3].Value == "step:1", "setting and window steps survive saving");
+            Expect(ScenarioStep.Parse("run | | C:\\x.exe").Flags == "", "an old step has no flags");
+            Expect(RepeatSpec.Mode("3") == "count" && RepeatSpec.Mode("0") == "forever" && RepeatSpec.Mode("while:Game") == "if" && RepeatSpec.Mode("if:time:09:00-18:00") == "if", "repeat modes are recognized");
+            string rk, ra;
+            bool rn;
+            RepeatSpec.ParseIf("while:Game", out rk, out rn, out ra);
+            Expect(rk == "running" && !rn && ra == "Game", "the old while form still works");
+            RepeatSpec.ParseIf(RepeatSpec.FormatIf("time", true, "09:00-18:00"), out rk, out rn, out ra);
+            Expect(rk == "time" && rn && ra == "09:00-18:00", "a repeat condition with colons in the argument survives");
+            var toggles = Fresh();
+            bool allKnown = true;
+            foreach (string key in Config.Toggles)
+            {
+                bool? before = toggles.GetToggle(key);
+                if (before == null) { allKnown = false; continue; }
+                toggles.SetToggle(key, !before.Value);
+                if (toggles.GetToggle(key) != !before.Value) allKnown = false;
+            }
+            Expect(allKnown && toggles.GetToggle("Nope") == null, "every setting can be read and switched");
+
+            var ranged = new ScenarioStep { Kind = "repeat", Option = "3", Value = "1" };
+            ranged.Set("wait", true);
+            ranged.SetFlagValue("to", "2");
+            Expect(ranged.FlagValue("to") == "2" && ranged.Has("wait"), "a flag with a value lives next to a plain flag");
+            ranged.SetFlagValue("to", "");
+            Expect(ranged.FlagValue("to") == "" && ranged.Flags == "wait", "an empty flag value removes it");
+            Expect(Scenario.Names("Discord, Telegram.exe, ,steam").SequenceEqual(new[] { "Discord", "Telegram", "steam" }), "a program list is split");
+
+            var blockSteps = new System.Collections.Generic.List<ScenarioStep>();
+            foreach (string k in new[] { "if", "wait", "if", "wait", "else", "wait", "endif", "else", "wait", "endif", "wait" })
+                blockSteps.Add(new ScenarioStep { Kind = k });
+            System.Collections.Generic.Dictionary<int, int> elseOf, endOf, elseEnd;
+            Blocks.Match(blockSteps, out elseOf, out endOf, out elseEnd);
+            Expect(elseOf[0] == 7 && endOf[0] == 9 && elseOf[2] == 4 && endOf[2] == 6 && elseEnd[7] == 9 && elseEnd[4] == 6, "nested blocks are matched");
+            Expect(Blocks.Depths(blockSteps).SequenceEqual(new[] { 0, 1, 1, 2, 1, 2, 1, 0, 1, 0, 0 }), "nested blocks get their depth");
+            var broken = new System.Collections.Generic.List<ScenarioStep> { new ScenarioStep { Kind = "if" }, new ScenarioStep { Kind = "wait" } };
+            Blocks.Match(broken, out elseOf, out endOf, out elseEnd);
+            Expect(endOf[0] == 1 && !elseOf.ContainsKey(0), "an unclosed block ends with the scenario");
+
+            var spaced = Fresh();
+            var bufScenario = new Scenario { Name = "Buf" };
+            bufScenario.Steps.Add(new ScenarioStep { Kind = "buffer", Option = "set", Value = "Сейчас у меня " });
+            bufScenario.Steps.Add(new ScenarioStep { Kind = "buffer", Option = "append", Value = " айпишник" });
+            bufScenario.Steps.Add(new ScenarioStep { Kind = "type", Value = "  " });
+            bufScenario.Steps.Add(new ScenarioStep { Kind = "fetch", Option = "between:append", Value = "https://example.com\nВаш IP: \n" });
+            spaced.Scenarios.Add(bufScenario);
+            string spacedPath = Path.Combine(Path.GetTempPath(), "bw-space-" + Guid.NewGuid().ToString("N") + ".ini");
+            spaced.Save(spacedPath);
+            var sp = Config.Load(spacedPath).Scenarios[0];
+            File.Delete(spacedPath);
+            Expect(sp.Steps[0].Value == "Сейчас у меня " && sp.Steps[1].Value == " айпишник" && sp.Steps[2].Value == "  ", "spaces at the edges of a value are kept");
+            Expect(sp.Steps[3].Value == "https://example.com\nВаш IP: \n" && sp.Steps[3].Option == "between:append", "a multi-line fetch value is kept");
+            Expect(Config.Unescape("a\\sb") == "a b" && Config.Escape("a\\sb") == "a\\\\sb", "a real backslash-s survives");
+
+            Expect(ScenarioCondition.TextMatches("clipboard\ncontains\nIP", "мой ip такой", "") && !ScenarioCondition.TextMatches("clipboard\ncontains\nIPv6", "мой ip", ""), "contains ignores case");
+            Expect(ScenarioCondition.TextMatches("buffer\nnocase\nПривет", "", "  привет ") && !ScenarioCondition.TextMatches("buffer\nexact\nПривет", "", "привет"), "same text with and without case");
+            Expect(ScenarioCondition.TextMatches("buffer\nexact\nA b", "x", "A b") && ScenarioCondition.TextMatches("clipboard\nempty\n", " ", "x"), "exact and empty comparisons");
+
+            string page = "<html><head><title>T</title><style>p{}</style><script>var ip='0.0.0.0'</script></head><body><p>Ваш IP: 10.20.30.40</p><div>Город:&nbsp;Москва</div></body></html>";
+            Expect(WebText.Strip(page).Contains("Ваш IP: 10.20.30.40") && !WebText.Strip(page).Contains("0.0.0.0") && WebText.Strip(page).Contains("Город: Москва"), "a page is turned into plain text");
+            Expect(WebText.Extract(page, "between", "ваш ip:", "") == "10.20.30.40", "text between a marker and the line end");
+            Expect(WebText.Extract(page, "between", "Город:", "Нет такого") == null && WebText.Extract(page, "between", "Город:", "") == "Москва", "between needs its end marker");
+            Expect(WebText.Extract(page, "regex", @"\b\d{1,3}(?:\.\d{1,3}){3}\b", "") == "10.20.30.40", "a pattern finds the address");
+            Expect(WebText.Extract(page, "regex", @"Город: (\w+)", "") == "Москва" && WebText.Extract(page, "regex", "(", "") == null, "a pattern group is used and a broken pattern gives nothing");
+            Expect(WebText.Extract("203.0.113.5\n", "all", "", "") == "203.0.113.5", "a plain text answer is taken as is");
+
+            var spot = ClickSpot.Parse("0.25;0.75;window;Telegram;100;200");
+            Expect(spot.X == 0.25 && spot.Y == 0.75 && spot.Mode == "window" && spot.Program == "Telegram" && spot.ScreenX == 100 && spot.Recorded, "a click spot is parsed");
+            Expect(ClickSpot.Parse(spot.ToString()).ToString() == spot.ToString() && !ClickSpot.Parse("").Recorded && ClickSpot.Parse("0;0;screen;;5;6").Recorded, "a click spot is written back");
+
             Console.WriteLine(failed == 0 ? "OK: all " + total + " tests passed" : "FAILED: " + failed + " of " + total);
             return failed;
+        }
+
+        static string WriteTemp(string text)
+        {
+            string path = Path.Combine(Path.GetTempPath(), "bw-raw-" + Guid.NewGuid().ToString("N") + ".ini");
+            File.WriteAllText(path, text, Encoding.UTF8);
+            return path;
         }
 
         static Config Fresh()

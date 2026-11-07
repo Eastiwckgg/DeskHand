@@ -1,4 +1,4 @@
-namespace BetterWriting
+namespace DeskHand
 {
     static class Loc
     {
